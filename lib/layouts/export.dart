@@ -207,7 +207,8 @@ class ExportBarState extends State<ExportBar> {
     var waypoints = <litchi.Waypoint>[];
     final center = listenables.circleCenter;
     final isOrbit = listenables.isCircularOrbit && center != null;
-    final poiAltitude = isOrbit
+    final faceOutward = isOrbit && listenables.circleFacesOutward;
+    final poiAltitude = isOrbit && !faceOutward
         ? DroneMappingEngine.calculateOrbitPoiAltitude(
             flightAltitude: listenables.altitude.toDouble(),
             radiusMeters: listenables.circleRadiusMeters!,
@@ -225,13 +226,17 @@ class ExportBarState extends State<ExportBar> {
           altitude: listenables.altitude,
           speed: listenables.speed.toInt(),
           heading: isOrbit
-              ? DroneMappingEngine.bearingTo(photoLocation, center)
+              ? DroneMappingEngine.orbitHeading(
+                  photoLocation,
+                  center,
+                  faceOutward: faceOutward,
+                )
               : null,
-          gimbalPitch: isOrbit ? 0 : listenables.cameraAngle,
-          gimbalMode: isOrbit
+          gimbalPitch: isOrbit && !faceOutward ? 0 : listenables.cameraAngle,
+          gimbalMode: isOrbit && !faceOutward
               ? litchi.GimbalMode.focusPoi
               : litchi.GimbalMode.interpolate,
-          poi: isOrbit
+          poi: isOrbit && !faceOutward
               ? litchi.Poi(
                   latitude: center.latitude,
                   longitude: center.longitude,
@@ -273,7 +278,11 @@ class ExportBarState extends State<ExportBar> {
           isOrbit && id == listenables.photoLocations.length - 1;
       final heading = isOrbit
           ? DroneMappingEngine.normalizeHeading(
-              DroneMappingEngine.bearingTo(photoLocation, center),
+              DroneMappingEngine.orbitHeading(
+                photoLocation,
+                center,
+                faceOutward: listenables.circleFacesOutward,
+              ),
             ).round()
           : null;
       final actions = <Action>[];

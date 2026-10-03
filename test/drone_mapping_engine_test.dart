@@ -56,6 +56,18 @@ void main() {
     );
     expect(DroneMappingEngine.normalizeHeading(270), closeTo(-90, 1e-9));
     expect(
+      DroneMappingEngine.orbitHeading(const LatLng(0, 1), const LatLng(0, 0)),
+      closeTo(270, 1e-9),
+    );
+    expect(
+      DroneMappingEngine.orbitHeading(
+        const LatLng(0, 1),
+        const LatLng(0, 0),
+        faceOutward: true,
+      ),
+      closeTo(90, 1e-9),
+    );
+    expect(
       DroneMappingEngine.calculateOrbitPoiAltitude(
         flightAltitude: 50,
         radiusMeters: 100,

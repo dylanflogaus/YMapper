@@ -13,6 +13,9 @@ enum AreaShape { polygon }
 
 enum PathShape { circle }
 
+/// Where the aircraft camera looks on a circular path.
+enum CircleFacing { inward, outward }
+
 class ValueListenables extends ChangeNotifier {
   /// Altitude in meters
   final _altitude = ValueNotifier<int>(50);
@@ -185,6 +188,16 @@ class ValueListenables extends ChangeNotifier {
 
   bool get isCirclePath =>
       missionType == MissionType.path && pathShape == PathShape.circle;
+
+  final _circleFacing = ValueNotifier<CircleFacing>(CircleFacing.inward);
+  CircleFacing get circleFacing => _circleFacing.value;
+  set circleFacing(CircleFacing value) {
+    if (_circleFacing.value == value) return;
+    _circleFacing.value = value;
+    notifyListeners();
+  }
+
+  bool get circleFacesOutward => circleFacing == CircleFacing.outward;
 
   void _clearGeneratedFlight() {
     _photoLocations.value = [];

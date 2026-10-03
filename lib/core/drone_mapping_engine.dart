@@ -192,6 +192,17 @@ class DroneMappingEngine {
     return [...points, points.first];
   }
 
+  /// Bearing from a path point toward the center, or away from it.
+  static double orbitHeading(
+    LatLng from,
+    LatLng center, {
+    bool faceOutward = false,
+  }) {
+    final inward = bearingTo(from, center);
+    if (!faceOutward) return inward;
+    return (inward + 180) % 360;
+  }
+
   static double bearingTo(LatLng from, LatLng target) {
     final bearing = const Distance(roundResult: false).bearing(from, target);
     return (bearing + 360) % 360;

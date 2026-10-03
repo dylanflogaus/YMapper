@@ -41,6 +41,8 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
 
   late MapLayer _selectedMapLayer;
 
+  bool _missionPanelExpanded = true;
+
   final List<Marker> _photoMarkers = [];
 
   final _debounce = const Duration(milliseconds: 800);
@@ -596,123 +598,203 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Material(
-                          elevation: 6,
-                          color: Theme.of(context).colorScheme.surface,
-                          borderRadius: BorderRadius.circular(16),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: SegmentedButtonTheme(
-                              data: SegmentedButtonThemeData(
-                                style: ButtonStyle(
-                                  backgroundColor:
-                                      WidgetStateProperty.resolveWith(
-                                    (states) => states
-                                            .contains(WidgetState.selected)
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Theme.of(context)
-                                            .colorScheme
-                                            .surfaceContainerHighest,
-                                  ),
-                                  foregroundColor:
-                                      WidgetStateProperty.resolveWith(
-                                    (states) =>
-                                        states.contains(WidgetState.selected)
-                                            ? Theme.of(context)
-                                                .colorScheme
-                                                .onPrimary
-                                            : Theme.of(context)
-                                                .colorScheme
-                                                .onSurface,
-                                  ),
-                                  side: WidgetStatePropertyAll(BorderSide(
-                                    color:
-                                        Theme.of(context).colorScheme.outline,
-                                  )),
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  SegmentedButton<MissionType>(
-                                    segments: const [
-                                      ButtonSegment(
-                                        value: MissionType.area,
-                                        label: Text("Area"),
-                                        icon: Icon(Icons.grid_on),
-                                        tooltip:
-                                            "Fill a shape with a coverage pattern",
-                                      ),
-                                      ButtonSegment(
-                                        value: MissionType.path,
-                                        label: Text("Path"),
-                                        icon: Icon(Icons.route),
-                                        tooltip:
-                                            "Fly along a shape and capture from it",
-                                      ),
-                                    ],
-                                    selected: {listenables.missionType},
-                                    onSelectionChanged: (selection) {
-                                      if (selection.isNotEmpty) {
-                                        listenables.missionType =
-                                            selection.first;
-                                      }
-                                    },
-                                  ),
-                                  const SizedBox(height: 6),
-                                  if (listenables.missionType ==
-                                      MissionType.area)
-                                    SegmentedButton<AreaShape>(
-                                      segments: const [
-                                        ButtonSegment(
-                                          value: AreaShape.polygon,
-                                          label: Text("Polygon"),
-                                          icon: Icon(Icons.pentagon_outlined),
-                                        ),
-                                      ],
-                                      selected: {listenables.areaShape},
-                                      onSelectionChanged: (selection) {
-                                        if (selection.isNotEmpty) {
-                                          listenables.areaShape =
-                                              selection.first;
-                                        }
-                                      },
-                                    )
-                                  else
-                                    SegmentedButton<PathShape>(
-                                      segments: const [
-                                        ButtonSegment(
-                                          value: PathShape.circle,
-                                          label: Text("Circle"),
-                                          icon: Icon(Icons.circle_outlined),
-                                        ),
-                                      ],
-                                      selected: {listenables.pathShape},
-                                      onSelectionChanged: (selection) {
-                                        if (selection.isNotEmpty) {
-                                          listenables.pathShape =
-                                              selection.first;
-                                        }
-                                      },
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 340),
+                          child: Material(
+                            elevation: 6,
+                            color: Theme.of(context).colorScheme.surface,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: SegmentedButtonTheme(
+                                data: SegmentedButtonThemeData(
+                                  style: ButtonStyle(
+                                    backgroundColor:
+                                        WidgetStateProperty.resolveWith(
+                                      (states) =>
+                                          states.contains(WidgetState.selected)
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .primary
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceContainerHighest,
                                     ),
-                                ],
+                                    foregroundColor:
+                                        WidgetStateProperty.resolveWith(
+                                      (states) =>
+                                          states.contains(WidgetState.selected)
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .onPrimary
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface,
+                                    ),
+                                    side: WidgetStatePropertyAll(BorderSide(
+                                      color:
+                                          Theme.of(context).colorScheme.outline,
+                                    )),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(8),
+                                      onTap: () => setState(() =>
+                                          _missionPanelExpanded =
+                                              !_missionPanelExpanded),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            listenables.missionType ==
+                                                    MissionType.area
+                                                ? Icons.grid_on
+                                                : Icons.route,
+                                            size: 18,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            listenables.missionType ==
+                                                    MissionType.area
+                                                ? "Area - Polygon"
+                                                : "Path - Circle",
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleSmall,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Icon(
+                                            _missionPanelExpanded
+                                                ? Icons.expand_less
+                                                : Icons.expand_more,
+                                            semanticLabel: _missionPanelExpanded
+                                                ? "Collapse mission panel"
+                                                : "Expand mission panel",
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (_missionPanelExpanded) ...[
+                                      if (listenables.isCirclePath) ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          listenables.circleCenter == null
+                                              ? "Tap the map to set the orbit center."
+                                              : listenables
+                                                          .circleRadiusMeters ==
+                                                      null
+                                                  ? "Tap again to set the orbit radius."
+                                                  : "Orbit radius: ${listenables.circleRadiusMeters!.toStringAsFixed(1)} m. Drag the handles to edit. Aircraft heading points ${listenables.circleFacesOutward ? "away from" : "toward"} the center; camera pitch remains the Aircraft setting.",
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall,
+                                        ),
+                                      ],
+                                      const SizedBox(height: 8),
+                                      SegmentedButton<MissionType>(
+                                        segments: const [
+                                          ButtonSegment(
+                                            value: MissionType.area,
+                                            label: Text("Area"),
+                                            icon: Icon(Icons.grid_on),
+                                            tooltip:
+                                                "Fill a shape with a coverage pattern",
+                                          ),
+                                          ButtonSegment(
+                                            value: MissionType.path,
+                                            label: Text("Path"),
+                                            icon: Icon(Icons.route),
+                                            tooltip:
+                                                "Fly along a shape and capture from it",
+                                          ),
+                                        ],
+                                        selected: {listenables.missionType},
+                                        onSelectionChanged: (selection) {
+                                          if (selection.isNotEmpty) {
+                                            listenables.missionType =
+                                                selection.first;
+                                          }
+                                        },
+                                      ),
+                                      const SizedBox(height: 6),
+                                      if (listenables.missionType ==
+                                          MissionType.area)
+                                        SegmentedButton<AreaShape>(
+                                          segments: const [
+                                            ButtonSegment(
+                                              value: AreaShape.polygon,
+                                              label: Text("Polygon"),
+                                              icon:
+                                                  Icon(Icons.pentagon_outlined),
+                                            ),
+                                          ],
+                                          selected: {listenables.areaShape},
+                                          onSelectionChanged: (selection) {
+                                            if (selection.isNotEmpty) {
+                                              listenables.areaShape =
+                                                  selection.first;
+                                            }
+                                          },
+                                        )
+                                      else
+                                        SegmentedButton<PathShape>(
+                                          segments: const [
+                                            ButtonSegment(
+                                              value: PathShape.circle,
+                                              label: Text("Circle"),
+                                              icon: Icon(Icons.circle_outlined),
+                                            ),
+                                          ],
+                                          selected: {listenables.pathShape},
+                                          onSelectionChanged: (selection) {
+                                            if (selection.isNotEmpty) {
+                                              listenables.pathShape =
+                                                  selection.first;
+                                            }
+                                          },
+                                        ),
+                                      if (listenables.isCirclePath) ...[
+                                        const SizedBox(height: 6),
+                                        SegmentedButton<CircleFacing>(
+                                          segments: const [
+                                            ButtonSegment(
+                                              value: CircleFacing.inward,
+                                              label: Text("Inside"),
+                                              icon: Icon(
+                                                  Icons.center_focus_strong),
+                                              tooltip:
+                                                  "Camera points at the center",
+                                            ),
+                                            ButtonSegment(
+                                              value: CircleFacing.outward,
+                                              label: Text("Outside"),
+                                              icon: Icon(Icons.arrow_outward),
+                                              tooltip:
+                                                  "Camera points away from the center",
+                                            ),
+                                          ],
+                                          selected: {listenables.circleFacing},
+                                          onSelectionChanged: (selection) {
+                                            if (selection.isNotEmpty) {
+                                              listenables.circleFacing =
+                                                  selection.first;
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    ],
+                                  ],
+                                ),
                               ),
                             ),
                           ),
                         ),
-                        if (listenables.isCirclePath)
-                          Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Text(
-                                listenables.circleCenter == null
-                                    ? "Tap the map to set the orbit center."
-                                    : listenables.circleRadiusMeters == null
-                                        ? "Tap again to set the orbit radius."
-                                        : "Orbit radius: ${listenables.circleRadiusMeters!.toStringAsFixed(1)} m. Drag the handles to edit. Aircraft heading points toward the center; camera pitch remains the Aircraft setting.",
-                              ),
-                            ),
-                          ),
                         const SizedBox(height: 8),
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 300),
