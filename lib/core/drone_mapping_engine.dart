@@ -192,6 +192,46 @@ class DroneMappingEngine {
     return [...points, points.first];
   }
 
+  /// Fly the placed points, and add photo stops along each leg when capturing.
+  ///
+  /// Photo spacing uses the same along-track overlap as a circle. Higher
+  /// overlap places the photos closer together.
+  List<LatLng> generateFreeformWaypoints(
+    List<LatLng> vertices, {
+    required bool closed,
+    required bool capturePhotos,
+  }) {
+    if (vertices.isEmpty) return [];
+    if (vertices.length == 1 || !capturePhotos) {
+      if (closed && vertices.length > 1) {
+        return [...vertices, vertices.first];
+      }
+      return List<LatLng>.from(vertices);
+    }
+
+    final spacing = max(1.0, footprintWidth * (1 - forwardOverlap));
+    final distance = const Distance(roundResult: false);
+    final points = <LatLng>[];
+    final segmentCount = closed ? vertices.length : vertices.length - 1;
+
+    for (var i = 0; i < segmentCount; i++) {
+      final start = vertices[i];
+      final end = vertices[(i + 1) % vertices.length];
+      points.add(start);
+      final segmentMeters = distance.as(LengthUnit.Meter, start, end);
+      final divisions = max(1, (segmentMeters / spacing).round());
+      if (divisions <= 1) continue;
+      final bearing = distance.bearing(start, end);
+      final step = segmentMeters / divisions;
+      for (var stepIndex = 1; stepIndex < divisions; stepIndex++) {
+        points.add(distance.offset(start, step * stepIndex, bearing));
+      }
+    }
+
+    if (closed) points.add(points.first);
+    return points;
+  }
+
   /// Bearing from a path point toward the center, or away from it.
   static double orbitHeading(
     LatLng from,
@@ -201,6 +241,114 @@ class DroneMappingEngine {
     final inward = bearingTo(from, center);
     if (!faceOutward) return inward;
     return (inward + 180) % 360;
+  }
+
+  /// Heading at [index] on a closed ring, toward the interior or away from it.
+  ///
+  /// The ring must not repeat its first point at the end.
+  static double closedPathHeading(
+    List<LatLng> ring,
+    int index, {
+    bool faceOutward = false,
+  }) {
+    if (ring.length < 2) return 0;
+    final count = ring.length;
+    final currentIndex = index % count;
+    final current = ring[currentIndex];
+    final previous = ring[(currentIndex - 1 + count) % count];
+    final next = ring[(currentIndex + 1) % count];
+    final interiorOnLeft = _signedRingArea(ring) >= 0;
+    final turn = interiorOnLeft ? -90.0 : 90.0;
+    final inward = _meanBearing(
+      bearingTo(previous, current) + turn,
+      bearingTo(current, next) + turn,
+    );
+    if (!faceOutward) return inward;
+    return (inward + 180) % 360;
+  }
+
+  /// Heading for any point on a closed ring, including points between corners.
+  static double closedPathHeadingAt(
+    List<LatLng> ring,
+    LatLng point, {
+    bool faceOutward = false,
+  }) {
+    if (ring.length < 2) return 0;
+    final distance = const Distance(roundResult: false);
+    var nearestVertex = 0;
+    var nearestVertexMeters = double.infinity;
+    for (var i = 0; i < ring.length; i++) {
+      final meters = distance.as(LengthUnit.Meter, point, ring[i]);
+      if (meters < nearestVertexMeters) {
+        nearestVertexMeters = meters;
+        nearestVertex = i;
+      }
+    }
+    if (nearestVertexMeters <= 0.5) {
+      return closedPathHeading(
+        ring,
+        nearestVertex,
+        faceOutward: faceOutward,
+      );
+    }
+
+    var segment = 0;
+    var segmentMeters = double.infinity;
+    for (var i = 0; i < ring.length; i++) {
+      final meters = _distanceToSegmentMeters(
+        point,
+        ring[i],
+        ring[(i + 1) % ring.length],
+      );
+      if (meters < segmentMeters) {
+        segmentMeters = meters;
+        segment = i;
+      }
+    }
+    final travel = bearingTo(ring[segment], ring[(segment + 1) % ring.length]);
+    final interiorOnLeft = _signedRingArea(ring) >= 0;
+    final inward = (travel + (interiorOnLeft ? -90 : 90) + 360) % 360;
+    if (!faceOutward) return inward;
+    return (inward + 180) % 360;
+  }
+
+  static double _distanceToSegmentMeters(
+      LatLng point, LatLng start, LatLng end) {
+    final origin = start;
+    final localPoint = _latLngToPoint(point, origin);
+    final localEnd = _latLngToPoint(end, origin);
+    final lengthSquared = localEnd.x * localEnd.x + localEnd.y * localEnd.y;
+    if (lengthSquared < 1e-6) return _distance(localPoint, const Point(0, 0));
+    var progress =
+        (localPoint.x * localEnd.x + localPoint.y * localEnd.y) / lengthSquared;
+    progress = progress.clamp(0.0, 1.0);
+    final closest = Point(localEnd.x * progress, localEnd.y * progress);
+    return _distance(localPoint, closest);
+  }
+
+  static double _signedRingArea(List<LatLng> ring) {
+    if (ring.length < 3) return 0;
+    final origin = ring.first;
+    var area = 0.0;
+    for (var i = 0; i < ring.length; i++) {
+      final start = _latLngToPoint(ring[i], origin);
+      final end = _latLngToPoint(ring[(i + 1) % ring.length], origin);
+      area += start.x * end.y - end.x * start.y;
+    }
+    return area / 2;
+  }
+
+  static double _meanBearing(double first, double second) {
+    final firstRadians = first * pi / 180;
+    final secondRadians = second * pi / 180;
+    final east = sin(firstRadians) + sin(secondRadians);
+    final north = cos(firstRadians) + cos(secondRadians);
+    if (east.abs() < 1e-9 && north.abs() < 1e-9) {
+      return (first + 360) % 360;
+    }
+    var bearing = atan2(east, north) * 180 / pi;
+    if (bearing < 0) bearing += 360;
+    return bearing;
   }
 
   static double bearingTo(LatLng from, LatLng target) {

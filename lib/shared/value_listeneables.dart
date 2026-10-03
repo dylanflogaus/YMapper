@@ -11,10 +11,10 @@ enum MissionType { area, path }
 
 enum AreaShape { polygon }
 
-enum PathShape { circle }
+enum PathShape { circle, freeform }
 
-/// Where the aircraft camera looks on a circular path.
-enum CircleFacing { inward, outward }
+/// Where the aircraft camera looks on a circle or closed freeform path.
+enum PathFacing { inward, outward }
 
 class ValueListenables extends ChangeNotifier {
   /// Altitude in meters
@@ -189,15 +189,20 @@ class ValueListenables extends ChangeNotifier {
   bool get isCirclePath =>
       missionType == MissionType.path && pathShape == PathShape.circle;
 
-  final _circleFacing = ValueNotifier<CircleFacing>(CircleFacing.inward);
-  CircleFacing get circleFacing => _circleFacing.value;
-  set circleFacing(CircleFacing value) {
-    if (_circleFacing.value == value) return;
-    _circleFacing.value = value;
+  bool get isFreeformPath =>
+      missionType == MissionType.path && pathShape == PathShape.freeform;
+
+  bool get isClosedFreeformPath => isFreeformPath && pathPoints.length > 1;
+
+  final _pathFacing = ValueNotifier<PathFacing>(PathFacing.inward);
+  PathFacing get pathFacing => _pathFacing.value;
+  set pathFacing(PathFacing value) {
+    if (_pathFacing.value == value) return;
+    _pathFacing.value = value;
     notifyListeners();
   }
 
-  bool get circleFacesOutward => circleFacing == CircleFacing.outward;
+  bool get pathFacesOutward => pathFacing == PathFacing.outward;
 
   void _clearGeneratedFlight() {
     _photoLocations.value = [];
@@ -266,11 +271,35 @@ class ValueListenables extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Waypoints of a freeform path, in flight order.
+  final _pathPoints = ValueNotifier<List<LatLng>>([]);
+  List<LatLng> get pathPoints => _pathPoints.value;
+
+  void addPathPoint(LatLng point) {
+    _pathPoints.value = [..._pathPoints.value, point];
+    notifyListeners();
+  }
+
+  void updatePathPoint(int index, LatLng point) {
+    if (index < 0 || index >= _pathPoints.value.length) return;
+    final updated = List<LatLng>.from(_pathPoints.value);
+    updated[index] = point;
+    _pathPoints.value = updated;
+    notifyListeners();
+  }
+
+  void removePathPoint(LatLng point) {
+    final updated = List<LatLng>.from(_pathPoints.value)..remove(point);
+    _pathPoints.value = updated;
+    notifyListeners();
+  }
+
   bool get isCircularOrbit =>
       isCirclePath && circleCenter != null && circleRadiusMeters != null;
 
   bool get hasActiveGeometry {
     if (isCirclePath) return isCircularOrbit;
+    if (isFreeformPath) return pathPoints.isNotEmpty;
     return isPolygonArea && polygon.length > 2;
   }
 
@@ -324,7 +353,9 @@ class ValueListenables extends ChangeNotifier {
   }
 
   int get generatedPointCount {
-    if (isCircularOrbit && _photoLocations.value.length > 1) {
+    final hidesClosingPoint = (isCircularOrbit || isClosedFreeformPath) &&
+        _photoLocations.value.length > 1;
+    if (hidesClosingPoint) {
       return _photoLocations.value.length - 1;
     }
     return _photoLocations.value.length;
@@ -334,6 +365,7 @@ class ValueListenables extends ChangeNotifier {
     _polygon.value = [];
     _circleCenter.value = null;
     _circleRadiusMeters.value = null;
+    _pathPoints.value = [];
     _homePoint.value = null;
     _photoLocations.value = [];
     _flightLine.value = null;

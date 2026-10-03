@@ -207,7 +207,8 @@ class ExportBarState extends State<ExportBar> {
     var waypoints = <litchi.Waypoint>[];
     final center = listenables.circleCenter;
     final isOrbit = listenables.isCircularOrbit && center != null;
-    final faceOutward = isOrbit && listenables.circleFacesOutward;
+    final faceOutward = listenables.pathFacesOutward;
+    final isDirectedPath = isOrbit || listenables.isClosedFreeformPath;
     final poiAltitude = isOrbit && !faceOutward
         ? DroneMappingEngine.calculateOrbitPoiAltitude(
             flightAltitude: listenables.altitude.toDouble(),
@@ -218,19 +219,18 @@ class ExportBarState extends State<ExportBar> {
 
     for (var id = 0; id < listenables.photoLocations.length; id++) {
       final photoLocation = listenables.photoLocations[id];
-      final isClosingPoint =
-          isOrbit && id == listenables.photoLocations.length - 1;
+      final isClosingPoint = _isClosingWaypoint(listenables, id);
+      final skipEndpointActions =
+          listenables.isClosedFreeformPath && listenables.createCameraPoints
+              ? id == 0
+              : isClosingPoint;
       waypoints.add(litchi.Waypoint(
           latitude: photoLocation.latitude,
           longitude: photoLocation.longitude,
           altitude: listenables.altitude,
           speed: listenables.speed.toInt(),
-          heading: isOrbit
-              ? DroneMappingEngine.orbitHeading(
-                  photoLocation,
-                  center,
-                  faceOutward: faceOutward,
-                )
+          heading: isDirectedPath
+              ? _pathHeadingDegrees(listenables, photoLocation)
               : null,
           gimbalPitch: isOrbit && !faceOutward ? 0 : listenables.cameraAngle,
           gimbalMode: isOrbit && !faceOutward
@@ -244,13 +244,13 @@ class ExportBarState extends State<ExportBar> {
                 )
               : null,
           actions: [
-            if (!isClosingPoint && listenables.delayAtWaypoint > 0)
+            if (!skipEndpointActions && listenables.delayAtWaypoint > 0)
               litchi.Action(
                   actionType: litchi.ActionType.stayFor,
 
                   // Litchi uses milliseconds for delay time
                   actionParam: listenables.delayAtWaypoint.toDouble() * 1000),
-            if (!isClosingPoint && listenables.createCameraPoints)
+            if (!skipEndpointActions && listenables.createCameraPoints)
               litchi.Action(actionType: litchi.ActionType.takePhoto)
           ]));
     }
@@ -262,11 +262,12 @@ class ExportBarState extends State<ExportBar> {
     var placemarks = <Placemark>[];
     final center = listenables.circleCenter;
     final isOrbit = listenables.isCircularOrbit && center != null;
+    final isDirectedPath = isOrbit || listenables.isClosedFreeformPath;
 
     int? previousHeading;
     final capturePhotos = listenables.createCameraPoints;
     final continuousOrbit = isOrbit && !capturePhotos;
-    final hoverSeconds = capturePhotos && isOrbit
+    final hoverSeconds = capturePhotos && isDirectedPath
         ? (listenables.delayAtWaypoint > 0
             ? listenables.delayAtWaypoint.toDouble()
             : DroneMappingEngine.orbitPhotoStabilizationSeconds)
@@ -274,24 +275,20 @@ class ExportBarState extends State<ExportBar> {
 
     for (var id = 0; id < listenables.photoLocations.length; id++) {
       final photoLocation = listenables.photoLocations[id];
-      final isClosingPoint =
-          isOrbit && id == listenables.photoLocations.length - 1;
-      final heading = isOrbit
+      final isClosingPoint = _isClosingWaypoint(listenables, id);
+      final heading = isDirectedPath
           ? DroneMappingEngine.normalizeHeading(
-              DroneMappingEngine.orbitHeading(
-                photoLocation,
-                center,
-                faceOutward: listenables.circleFacesOutward,
-              ),
+              _pathHeadingDegrees(listenables, photoLocation),
             ).round()
           : null;
       final actions = <Action>[];
       var actionId = id * 4;
       // The first orbit stop only pitches the camera. Its picture is taken
       // on the closing visit, after the gimbal has finished moving.
-      final orbitPhotoSetup = isOrbit && capturePhotos && id == 0;
-      final takePhotoHere =
-          capturePhotos && !orbitPhotoSetup && (!isClosingPoint || isOrbit);
+      final orbitPhotoSetup = isDirectedPath && capturePhotos && id == 0;
+      final takePhotoHere = capturePhotos &&
+          !orbitPhotoSetup &&
+          (!isClosingPoint || isDirectedPath);
 
       if (heading != null && (takePhotoHere || orbitPhotoSetup)) {
         actions.add(Action(
@@ -347,11 +344,11 @@ class ExportBarState extends State<ExportBar> {
           height: listenables.altitude,
           speed: listenables.speed,
           headingParam: HeadingParam(
-              headingMode: isOrbit
+              headingMode: isDirectedPath
                   ? HeadingMode.smoothTransition
                   : HeadingMode.followWayline,
               headingAngle: heading,
-              headingAngleEnable: isOrbit,
+              headingAngleEnable: isDirectedPath,
               headingPathMode: HeadingPathMode.followBadArc),
           turnParam: TurnParam(
               waypointTurnMode: continuousOrbit
@@ -359,7 +356,7 @@ class ExportBarState extends State<ExportBar> {
                   : WaypointTurnMode.toPointAndStopWithDiscontinuityCurvature,
               turnDampingDistance: 0),
           useStraightLine: !continuousOrbit,
-          gimbalHeadingParam: isOrbit
+          gimbalHeadingParam: isDirectedPath
               ? WaypointGimbalHeadingParam(
                   pitch: listenables.cameraAngle.toDouble(),
                   yaw: 0.0,
@@ -378,6 +375,28 @@ class ExportBarState extends State<ExportBar> {
     }
 
     return placemarks;
+  }
+
+  double _pathHeadingDegrees(ValueListenables listenables, LatLng point) {
+    final faceOutward = listenables.pathFacesOutward;
+    if (listenables.isCircularOrbit && listenables.circleCenter != null) {
+      return DroneMappingEngine.orbitHeading(
+        point,
+        listenables.circleCenter!,
+        faceOutward: faceOutward,
+      );
+    }
+    return DroneMappingEngine.closedPathHeadingAt(
+      listenables.pathPoints,
+      point,
+      faceOutward: faceOutward,
+    );
+  }
+
+  bool _isClosingWaypoint(ValueListenables listenables, int id) {
+    final last = listenables.photoLocations.length - 1;
+    if (id != last || last < 1) return false;
+    return listenables.isCircularOrbit || listenables.isClosedFreeformPath;
   }
 
   AircraftPathMode _shortestYawPath(int? from, int to) {

@@ -55,6 +55,24 @@ void main() {
       closeTo(270, 1e-9),
     );
     expect(DroneMappingEngine.normalizeHeading(270), closeTo(-90, 1e-9));
+    final square = [
+      const LatLng(0, 0),
+      const LatLng(0, 1),
+      const LatLng(1, 1),
+      const LatLng(1, 0),
+    ];
+    expect(
+      DroneMappingEngine.closedPathHeading(square, 0),
+      closeTo(45, 1),
+    );
+    expect(
+      DroneMappingEngine.closedPathHeading(square, 0, faceOutward: true),
+      closeTo(225, 1),
+    );
+    expect(
+      DroneMappingEngine.closedPathHeadingAt(square, const LatLng(0, 0.5)),
+      closeTo(0, 1),
+    );
     expect(
       DroneMappingEngine.orbitHeading(const LatLng(0, 1), const LatLng(0, 0)),
       closeTo(270, 1e-9),
@@ -75,5 +93,39 @@ void main() {
       ),
       closeTo(-50, 1e-9),
     );
+  });
+
+  test('uses overlap to add photo stops along a freeform path', () {
+    final start = const LatLng(39.78, -75.61);
+    final end = const Distance(roundResult: false).offset(start, 90, 0);
+    final wideSpacing = engine.generateFreeformWaypoints(
+      [start, end],
+      closed: true,
+      capturePhotos: true,
+    );
+    final closeSpacing = DroneMappingEngine(
+      altitude: 50,
+      forwardOverlap: 0.8,
+      sideOverlap: 0.4,
+      sensorWidth: 13.2,
+      sensorHeight: 8.8,
+      focalLength: 8.8,
+      imageWidth: 4000,
+      imageHeight: 3000,
+      angle: 0,
+      groundOffset: 0,
+    ).generateFreeformWaypoints(
+      [start, end],
+      closed: true,
+      capturePhotos: true,
+    );
+    final cornersOnly = engine.generateFreeformWaypoints(
+      [start, end],
+      closed: true,
+      capturePhotos: false,
+    );
+
+    expect(closeSpacing.length, greaterThan(wideSpacing.length));
+    expect(cornersOnly.length, 3);
   });
 }

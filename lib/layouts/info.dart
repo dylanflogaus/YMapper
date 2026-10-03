@@ -33,7 +33,9 @@ class _InfoState extends State<Info> {
             ? DroneMappingEngine.calculateCircleArea(
                     listenables.circleRadiusMeters!)
                 .round()
-            : DroneMappingEngine.calculateArea(listenables.polygon).round();
+            : listenables.isFreeformPath
+                ? 0
+                : DroneMappingEngine.calculateArea(listenables.polygon).round();
         recommendedShutterSpeed =
             DroneMappingEngine.calculateRecommendedShutterSpeed(
           altitude: listenables.altitude - listenables.groundOffset,
@@ -53,11 +55,12 @@ class _InfoState extends State<Info> {
         );
       }
 
-      final pauseSeconds = listenables.isCircularOrbit &&
-              listenables.createCameraPoints &&
-              listenables.delayAtWaypoint == 0
-          ? DroneMappingEngine.orbitPhotoStabilizationSeconds
-          : listenables.delayAtWaypoint.toDouble();
+      final pauseSeconds =
+          (listenables.isCircularOrbit || listenables.isClosedFreeformPath) &&
+                  listenables.createCameraPoints &&
+                  listenables.delayAtWaypoint == 0
+              ? DroneMappingEngine.orbitPhotoStabilizationSeconds
+              : listenables.delayAtWaypoint.toDouble();
 
       return Column(
         mainAxisSize: MainAxisSize.min,

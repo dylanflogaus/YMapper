@@ -189,6 +189,12 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
     super.dispose();
   }
 
+  String _missionPanelTitle(ValueListenables listenables) {
+    if (listenables.missionType == MissionType.area) return "Area - Polygon";
+    if (listenables.pathShape == PathShape.freeform) return "Path - Freeform";
+    return "Path - Circle";
+  }
+
   void _handleMapTap(ValueListenables listenables, LatLng point) {
     if (listenables.isCirclePath) {
       final center = listenables.circleCenter;
@@ -201,6 +207,15 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
           point,
         );
         listenables.setCircleRadius(radius);
+      }
+      return;
+    }
+
+    if (listenables.isFreeformPath) {
+      if (listenables.homePoint == null) {
+        listenables.homePoint = point;
+      } else {
+        listenables.addPathPoint(point);
       }
       return;
     }
@@ -240,6 +255,12 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
         listenables.circleCenter!,
         listenables.circleRadiusMeters!,
       );
+    } else if (listenables.isFreeformPath) {
+      waypoints = droneMapping.generateFreeformWaypoints(
+        listenables.pathPoints,
+        closed: listenables.pathPoints.length > 1,
+        capturePhotos: listenables.createCameraPoints,
+      );
     } else {
       waypoints = droneMapping.generateWaypoints(
           listenables.polygon,
@@ -254,7 +275,8 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
     _photoMarkers.clear();
 
     final visibleWaypointCount =
-        listenables.isCircularOrbit && waypoints.length > 1
+        (listenables.isCircularOrbit || listenables.isClosedFreeformPath) &&
+                waypoints.length > 1
             ? waypoints.length - 1
             : waypoints.length;
     for (int i = 0; i < visibleWaypointCount; i++) {
@@ -530,6 +552,27 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                         ),
                     ],
                   ),
+                if (listenables.isFreeformPath)
+                  DragMarkers(
+                    markers: [
+                      for (var point in listenables.pathPoints)
+                        DragMarker(
+                          size: const Size(30, 30),
+                          point: point,
+                          alignment: Alignment.topCenter,
+                          builder: (_, coords, b) => GestureDetector(
+                              onSecondaryTap: () =>
+                                  listenables.removePathPoint(point),
+                              child: const Icon(Icons.place, size: 30)),
+                          onDragUpdate: (details, latLng) {
+                            final index = listenables.pathPoints.indexOf(point);
+                            if (index >= 0) {
+                              listenables.updatePathPoint(index, latLng);
+                            }
+                          },
+                        ),
+                    ],
+                  ),
                 if (listenables.isPolygonArea)
                   DragMarkers(
                     markers: [
@@ -660,10 +703,7 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                                           ),
                                           const SizedBox(width: 8),
                                           Text(
-                                            listenables.missionType ==
-                                                    MissionType.area
-                                                ? "Area - Polygon"
-                                                : "Path - Circle",
+                                            _missionPanelTitle(listenables),
                                             style: Theme.of(context)
                                                 .textTheme
                                                 .titleSmall,
@@ -681,6 +721,19 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                                       ),
                                     ),
                                     if (_missionPanelExpanded) ...[
+                                      if (listenables.isFreeformPath) ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          listenables.homePoint == null
+                                              ? "Tap the map to set home, then tap to add path points."
+                                              : listenables.pathPoints.isEmpty
+                                                  ? "Tap the map to add path points in flight order."
+                                                  : "${listenables.pathPoints.length} path points. Drag a point to move it. Right-click a point to remove it. The path returns to the first point. With photo points on, Overlap sets the distance between photos. The camera points ${listenables.pathFacesOutward ? "away from" : "into"} the shape.",
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall,
+                                        ),
+                                      ],
                                       if (listenables.isCirclePath) ...[
                                         const SizedBox(height: 8),
                                         Text(
@@ -690,7 +743,7 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                                                           .circleRadiusMeters ==
                                                       null
                                                   ? "Tap again to set the orbit radius."
-                                                  : "Orbit radius: ${listenables.circleRadiusMeters!.toStringAsFixed(1)} m. Drag the handles to edit. Aircraft heading points ${listenables.circleFacesOutward ? "away from" : "toward"} the center; camera pitch remains the Aircraft setting.",
+                                                  : "Orbit radius: ${listenables.circleRadiusMeters!.toStringAsFixed(1)} m. Drag the handles to edit. Aircraft heading points ${listenables.pathFacesOutward ? "away from" : "toward"} the center; camera pitch remains the Aircraft setting.",
                                           style: Theme.of(context)
                                               .textTheme
                                               .bodySmall,
@@ -750,6 +803,11 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                                               label: Text("Circle"),
                                               icon: Icon(Icons.circle_outlined),
                                             ),
+                                            ButtonSegment(
+                                              value: PathShape.freeform,
+                                              label: Text("Freeform"),
+                                              icon: Icon(Icons.polyline),
+                                            ),
                                           ],
                                           selected: {listenables.pathShape},
                                           onSelectionChanged: (selection) {
@@ -759,30 +817,31 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                                             }
                                           },
                                         ),
-                                      if (listenables.isCirclePath) ...[
+                                      if (listenables.missionType ==
+                                          MissionType.path) ...[
                                         const SizedBox(height: 6),
-                                        SegmentedButton<CircleFacing>(
+                                        SegmentedButton<PathFacing>(
                                           segments: const [
                                             ButtonSegment(
-                                              value: CircleFacing.inward,
+                                              value: PathFacing.inward,
                                               label: Text("Inside"),
                                               icon: Icon(
                                                   Icons.center_focus_strong),
                                               tooltip:
-                                                  "Camera points at the center",
+                                                  "Camera points into the path",
                                             ),
                                             ButtonSegment(
-                                              value: CircleFacing.outward,
+                                              value: PathFacing.outward,
                                               label: Text("Outside"),
                                               icon: Icon(Icons.arrow_outward),
                                               tooltip:
-                                                  "Camera points away from the center",
+                                                  "Camera points away from the path",
                                             ),
                                           ],
-                                          selected: {listenables.circleFacing},
+                                          selected: {listenables.pathFacing},
                                           onSelectionChanged: (selection) {
                                             if (selection.isNotEmpty) {
-                                              listenables.circleFacing =
+                                              listenables.pathFacing =
                                                   selection.first;
                                             }
                                           },
