@@ -48,8 +48,10 @@ class DroneMappingEngine {
 
   double get effectiveAltitude => altitude - groundOffset;
 
-  double get gsdX => (effectiveAltitude * sensorWidth) / (imageWidth * focalLength);
-  double get gsdY => (effectiveAltitude * sensorHeight) / (imageHeight * focalLength);
+  double get gsdX =>
+      (effectiveAltitude * sensorWidth) / (imageWidth * focalLength);
+  double get gsdY =>
+      (effectiveAltitude * sensorHeight) / (imageHeight * focalLength);
 
   double get footprintWidth => gsdX * imageWidth;
   double get footprintHeight => gsdY * imageHeight;
@@ -61,8 +63,10 @@ class DroneMappingEngine {
   double get pathSpacing => footprintHeight * (1 - forwardOverlap);
 
   // Spacing for horizontal lines
-  double get horizontalLineSpacing => footprintHeight * (1 - sideOverlap);      // Y spacing (cross-track)
-  double get horizontalWaypointSpacing => footprintWidth * (1 - forwardOverlap); // X spacing (along-track)
+  double get horizontalLineSpacing =>
+      footprintHeight * (1 - sideOverlap); // Y spacing (cross-track)
+  double get horizontalWaypointSpacing =>
+      footprintWidth * (1 - forwardOverlap); // X spacing (along-track)
 
   // Convert LatLng to local coordinate system (in meters)
   static List<Point> _latLngToMeters(List<LatLng> polygon) {
@@ -121,7 +125,8 @@ class DroneMappingEngine {
   }
 
   static Point _latLngToPoint(LatLng latLng, LatLng origin) {
-    double x = (latLng.longitude - origin.longitude) * (40075000 * cos((origin.latitude * pi) / 180) / 360);
+    double x = (latLng.longitude - origin.longitude) *
+        (40075000 * cos((origin.latitude * pi) / 180) / 360);
     double y = (latLng.latitude - origin.latitude) * (40075000 / 360);
     return Point(x, y);
   }
@@ -132,6 +137,7 @@ class DroneMappingEngine {
 
   // Calculate the area of a polygon using the Shoelace formula
   static double calculateArea(List<LatLng> polygon) {
+    if (polygon.length < 3) return 0;
     var localPolygon = _latLngToMeters(polygon);
     double area = 0.0;
     for (int i = 0; i < localPolygon.length - 1; i++) {
@@ -143,8 +149,83 @@ class DroneMappingEngine {
     return area.abs() / 2.0;
   }
 
+  static List<LatLng> generateCircleBoundary(
+    LatLng center,
+    double radiusMeters, {
+    int segments = 64,
+  }) {
+    if (radiusMeters <= 0 || segments < 3) return [];
+
+    final distance = const Distance(roundResult: false);
+    return List.generate(
+      segments,
+      (index) => distance.offset(
+        center,
+        radiusMeters,
+        index * 360 / segments,
+      ),
+    );
+  }
+
+  /// Generate a clockwise circular flight path and close the loop.
+  ///
+  /// Forward overlap determines the distance between successive photo
+  /// positions using the camera's horizontal footprint.
+  List<LatLng> generateCircularWaypoints(
+    LatLng center,
+    double radiusMeters,
+  ) {
+    if (radiusMeters <= 0) return [];
+
+    final spacing = max(
+      1.0,
+      footprintWidth * (1 - forwardOverlap),
+    );
+    final pointCount = max(12, (2 * pi * radiusMeters / spacing).ceil());
+    final points = generateCircleBoundary(
+      center,
+      radiusMeters,
+      segments: pointCount,
+    );
+
+    if (points.isEmpty) return points;
+    return [...points, points.first];
+  }
+
+  static double bearingTo(LatLng from, LatLng target) {
+    final bearing = const Distance(roundResult: false).bearing(from, target);
+    return (bearing + 360) % 360;
+  }
+
+  static double normalizeHeading(double heading) {
+    final normalized = heading % 360;
+    return normalized > 180 ? normalized - 360 : normalized;
+  }
+
+  static double calculateOrbitPoiAltitude({
+    required double flightAltitude,
+    required double radiusMeters,
+    required double cameraAngle,
+  }) {
+    final downwardAngle = cameraAngle.abs().clamp(0, 89).toDouble();
+    if (downwardAngle == 0 || radiusMeters <= 0) return flightAltitude;
+
+    final targetAltitude =
+        flightAltitude - radiusMeters * tan(downwardAngle * pi / 180);
+    return targetAltitude.clamp(-200, 500).toDouble();
+  }
+
+  /// Pause before each orbit photo so the aircraft can settle.
+  static const double orbitPhotoStabilizationSeconds = 1.0;
+
+  static double calculateCircleArea(double radiusMeters) {
+    if (radiusMeters <= 0) return 0;
+    return pi * radiusMeters * radiusMeters;
+  }
+
   // Generate waypoints within the polygon in a boustrophedon pattern
-  List<LatLng> generateWaypoints(List<LatLng> polygon, bool createCameraPoints, [bool fillGrid = false, LatLng? homePoint]) {
+  List<LatLng> generateWaypoints(List<LatLng> polygon, bool createCameraPoints,
+      [bool fillGrid = false, LatLng? homePoint]) {
     var localPolygon = _latLngToMeters(polygon);
     var rotatedPolygon = _rotatePolygon(localPolygon, angle);
     var origin = polygon[0];
@@ -208,7 +289,8 @@ class DroneMappingEngine {
 
       if (fillGrid) {
         var lastHorizontal = waypoints.last;
-        var verticalWaypoints = _generateVerticalWaypoints(rotatedPolygon, createCameraPoints, lastHorizontal, minX, maxX, minY, maxY);
+        var verticalWaypoints = _generateVerticalWaypoints(rotatedPolygon,
+            createCameraPoints, lastHorizontal, minX, maxX, minY, maxY);
         waypoints.addAll(verticalWaypoints);
       }
 
@@ -219,8 +301,9 @@ class DroneMappingEngine {
       List<Point> selected;
 
       if (!fillGrid) {
-        var horiz = _generateHorizontalWaypoints(rotatedPolygon, createCameraPoints, homeP, minX, maxX, minY, maxY);
-        if(horiz.isEmpty) {
+        var horiz = _generateHorizontalWaypoints(
+            rotatedPolygon, createCameraPoints, homeP, minX, maxX, minY, maxY);
+        if (horiz.isEmpty) {
           return [];
         }
         var horizRev = horiz.reversed.toList();
@@ -229,14 +312,18 @@ class DroneMappingEngine {
         selected = distHoriz < distHorizRev ? horiz : horizRev;
       } else {
         // Horizontal first
-        var horiz = _generateHorizontalWaypoints(rotatedPolygon, createCameraPoints, homeP, minX, maxX, minY, maxY);
-        var vert = _generateVerticalWaypoints(rotatedPolygon, createCameraPoints, horiz.last, minX, maxX, minY, maxY);
+        var horiz = _generateHorizontalWaypoints(
+            rotatedPolygon, createCameraPoints, homeP, minX, maxX, minY, maxY);
+        var vert = _generateVerticalWaypoints(rotatedPolygon,
+            createCameraPoints, horiz.last, minX, maxX, minY, maxY);
         var pathHF = [...horiz, ...vert];
         var pathHFRev = pathHF.reversed.toList();
 
         // Vertical first
-        var vertF = _generateVerticalWaypoints(rotatedPolygon, createCameraPoints, homeP, minX, maxX, minY, maxY);
-        var horizA = _generateHorizontalWaypoints(rotatedPolygon, createCameraPoints, vertF.last, minX, maxX, minY, maxY);
+        var vertF = _generateVerticalWaypoints(
+            rotatedPolygon, createCameraPoints, homeP, minX, maxX, minY, maxY);
+        var horizA = _generateHorizontalWaypoints(rotatedPolygon,
+            createCameraPoints, vertF.last, minX, maxX, minY, maxY);
         var pathVF = [...vertF, ...horizA];
         var pathVFRev = pathVF.reversed.toList();
 
@@ -258,40 +345,59 @@ class DroneMappingEngine {
     }
   }
 
-  List<Point> _generateVerticalWaypoints(List<Point> polygon, bool createCameraPoints,Point lastHorizontal, num minHorizontalX, num maxHorizontalX, num minHorizontalY, num maxHorizontalY) {
-    var verticalLineSpacing = footprintWidth * (1 - sideOverlap);  // Fixed bug: Use width for side overlap in vertical lines
+  List<Point> _generateVerticalWaypoints(
+      List<Point> polygon,
+      bool createCameraPoints,
+      Point lastHorizontal,
+      num minHorizontalX,
+      num maxHorizontalX,
+      num minHorizontalY,
+      num maxHorizontalY) {
+    var verticalLineSpacing = footprintWidth *
+        (1 -
+            sideOverlap); // Fixed bug: Use width for side overlap in vertical lines
     var verticalWaypointSpacing = footprintHeight * (1 - forwardOverlap);
     num offset = verticalWaypointSpacing * 0.1;
 
     List<num> verticalYCoords = [];
     num adjustedMinY = minHorizontalY - verticalWaypointSpacing / 2 - offset;
-    for (num y = adjustedMinY; y <= maxHorizontalY + verticalWaypointSpacing / 2; y += verticalWaypointSpacing) {
+    for (num y = adjustedMinY;
+        y <= maxHorizontalY + verticalWaypointSpacing / 2;
+        y += verticalWaypointSpacing) {
       verticalYCoords.add(y);
     }
 
     num xLeft = minHorizontalX + verticalLineSpacing / 2;
-    List<num> yLeft = verticalYCoords.where((y) => _isPointInPolygon(Point(xLeft, y), polygon)).toList();
+    List<num> yLeft = verticalYCoords
+        .where((y) => _isPointInPolygon(Point(xLeft, y), polygon))
+        .toList();
     num minDistLeft = double.infinity;
     num distBottomLeft = double.infinity;
     num distTopLeft = double.infinity;
     if (yLeft.isNotEmpty) {
       num yBottomLeft = yLeft.first;
       num yTopLeft = yLeft.last;
-      distBottomLeft = sqrt(pow(xLeft - lastHorizontal.x, 2) + pow(yBottomLeft - lastHorizontal.y, 2));
-      distTopLeft = sqrt(pow(xLeft - lastHorizontal.x, 2) + pow(yTopLeft - lastHorizontal.y, 2));
+      distBottomLeft = sqrt(pow(xLeft - lastHorizontal.x, 2) +
+          pow(yBottomLeft - lastHorizontal.y, 2));
+      distTopLeft = sqrt(pow(xLeft - lastHorizontal.x, 2) +
+          pow(yTopLeft - lastHorizontal.y, 2));
       minDistLeft = min(distBottomLeft, distTopLeft);
     }
 
     num xRight = maxHorizontalX - verticalLineSpacing / 2;
-    List<num> yRight = verticalYCoords.where((y) => _isPointInPolygon(Point(xRight, y), polygon)).toList();
+    List<num> yRight = verticalYCoords
+        .where((y) => _isPointInPolygon(Point(xRight, y), polygon))
+        .toList();
     num minDistRight = double.infinity;
     num distBottomRight = double.infinity;
     num distTopRight = double.infinity;
     if (yRight.isNotEmpty) {
       num yBottomRight = yRight.first;
       num yTopRight = yRight.last;
-      distBottomRight = sqrt(pow(xRight - lastHorizontal.x, 2) + pow(yBottomRight - lastHorizontal.y, 2));
-      distTopRight = sqrt(pow(xRight - lastHorizontal.x, 2) + pow(yTopRight - lastHorizontal.y, 2));
+      distBottomRight = sqrt(pow(xRight - lastHorizontal.x, 2) +
+          pow(yBottomRight - lastHorizontal.y, 2));
+      distTopRight = sqrt(pow(xRight - lastHorizontal.x, 2) +
+          pow(yTopRight - lastHorizontal.y, 2));
       minDistRight = min(distBottomRight, distTopRight);
     }
 
@@ -309,7 +415,9 @@ class DroneMappingEngine {
     }
 
     List<Point> verticalWaypoints = [];
-    bool condition(num x) => deltaX > 0 ? x <= maxHorizontalX + verticalLineSpacing / 2 : x >= minHorizontalX - verticalLineSpacing / 2;
+    bool condition(num x) => deltaX > 0
+        ? x <= maxHorizontalX + verticalLineSpacing / 2
+        : x >= minHorizontalX - verticalLineSpacing / 2;
     for (num x = startX; condition(x); x += deltaX) {
       List<Point> column = [];
       for (num y in verticalYCoords) {
@@ -336,40 +444,57 @@ class DroneMappingEngine {
     return verticalWaypoints;
   }
 
-  List<Point> _generateHorizontalWaypoints(List<Point> polygon, bool createCameraPoints, Point previous, num minX, num maxX, num minY, num maxY) {
+  List<Point> _generateHorizontalWaypoints(
+      List<Point> polygon,
+      bool createCameraPoints,
+      Point previous,
+      num minX,
+      num maxX,
+      num minY,
+      num maxY) {
     num lineSpacing = footprintHeight * (1 - sideOverlap);
     num waypointSpacing = footprintWidth * (1 - forwardOverlap);
     num offset = waypointSpacing * 0.1;
 
     List<num> alongCoords = [];
     num adjustedMinAlong = minX - waypointSpacing / 2 - offset;
-    for (num x = adjustedMinAlong; x <= maxX + waypointSpacing / 2; x += waypointSpacing) {
+    for (num x = adjustedMinAlong;
+        x <= maxX + waypointSpacing / 2;
+        x += waypointSpacing) {
       alongCoords.add(x);
     }
 
     num yBottom = minY + lineSpacing / 2;
-    List<num> xBottom = alongCoords.where((x) => _isPointInPolygon(Point(x, yBottom), polygon)).toList();
+    List<num> xBottom = alongCoords
+        .where((x) => _isPointInPolygon(Point(x, yBottom), polygon))
+        .toList();
     num minDistBottom = double.infinity;
     num distLeftBottom = double.infinity;
     num distRightBottom = double.infinity;
     if (xBottom.isNotEmpty) {
       num xLeftBottom = xBottom.first;
       num xRightBottom = xBottom.last;
-      distLeftBottom = sqrt(pow(previous.x - xLeftBottom, 2) + pow(previous.y - yBottom, 2));
-      distRightBottom = sqrt(pow(previous.x - xRightBottom, 2) + pow(previous.y - yBottom, 2));
+      distLeftBottom =
+          sqrt(pow(previous.x - xLeftBottom, 2) + pow(previous.y - yBottom, 2));
+      distRightBottom = sqrt(
+          pow(previous.x - xRightBottom, 2) + pow(previous.y - yBottom, 2));
       minDistBottom = min(distLeftBottom, distRightBottom);
     }
 
     num yTop = maxY - lineSpacing / 2;
-    List<num> xTop = alongCoords.where((x) => _isPointInPolygon(Point(x, yTop), polygon)).toList();
+    List<num> xTop = alongCoords
+        .where((x) => _isPointInPolygon(Point(x, yTop), polygon))
+        .toList();
     num minDistTop = double.infinity;
     num distLeftTop = double.infinity;
     num distRightTop = double.infinity;
     if (xTop.isNotEmpty) {
       num xLeftTop = xTop.first;
       num xRightTop = xTop.last;
-      distLeftTop = sqrt(pow(previous.x - xLeftTop, 2) + pow(previous.y - yTop, 2));
-      distRightTop = sqrt(pow(previous.x - xRightTop, 2) + pow(previous.y - yTop, 2));
+      distLeftTop =
+          sqrt(pow(previous.x - xLeftTop, 2) + pow(previous.y - yTop, 2));
+      distRightTop =
+          sqrt(pow(previous.x - xRightTop, 2) + pow(previous.y - yTop, 2));
       minDistTop = min(distLeftTop, distRightTop);
     }
 
@@ -387,7 +512,8 @@ class DroneMappingEngine {
     }
 
     List<Point> horizontalWaypoints = [];
-    bool condition(num y) => deltaY > 0 ? y <= maxY + lineSpacing / 2 : y >= minY - lineSpacing / 2;
+    bool condition(num y) =>
+        deltaY > 0 ? y <= maxY + lineSpacing / 2 : y >= minY - lineSpacing / 2;
     for (num y = startY; condition(y); y += deltaY) {
       List<Point> line = [];
       for (num x in alongCoords) {
@@ -461,7 +587,8 @@ class DroneMappingEngine {
     int groundOffset = 0,
   }) {
     double effectiveAltitude = altitude - groundOffset.toDouble();
-    double gsdY = (effectiveAltitude * sensorHeight) / (imageHeight * focalLength);
+    double gsdY =
+        (effectiveAltitude * sensorHeight) / (imageHeight * focalLength);
     double footprintHeight = gsdY * imageHeight;
     double spacing = footprintHeight * (1 - forwardOverlap);
     return spacing / droneSpeed;

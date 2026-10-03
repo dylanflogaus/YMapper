@@ -1,8 +1,17 @@
+import 'package:ymapper/core/drone_mapping_engine.dart';
 import 'package:ymapper/presets/camera_preset.dart';
 import 'package:dji_waypoint_engine/engine.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+
+/// Area missions fill a shape with a coverage pattern. Path missions fly
+/// along a shape and capture from that path.
+enum MissionType { area, path }
+
+enum AreaShape { polygon }
+
+enum PathShape { circle }
 
 class ValueListenables extends ChangeNotifier {
   /// Altitude in meters
@@ -147,12 +156,118 @@ class ValueListenables extends ChangeNotifier {
     notifyListeners();
   }
 
+  final _missionType = ValueNotifier<MissionType>(MissionType.area);
+  MissionType get missionType => _missionType.value;
+  set missionType(MissionType value) {
+    if (_missionType.value == value) return;
+    _missionType.value = value;
+    _clearGeneratedFlight();
+  }
+
+  final _areaShape = ValueNotifier<AreaShape>(AreaShape.polygon);
+  AreaShape get areaShape => _areaShape.value;
+  set areaShape(AreaShape value) {
+    if (_areaShape.value == value) return;
+    _areaShape.value = value;
+    _clearGeneratedFlight();
+  }
+
+  final _pathShape = ValueNotifier<PathShape>(PathShape.circle);
+  PathShape get pathShape => _pathShape.value;
+  set pathShape(PathShape value) {
+    if (_pathShape.value == value) return;
+    _pathShape.value = value;
+    _clearGeneratedFlight();
+  }
+
+  bool get isPolygonArea =>
+      missionType == MissionType.area && areaShape == AreaShape.polygon;
+
+  bool get isCirclePath =>
+      missionType == MissionType.path && pathShape == PathShape.circle;
+
+  void _clearGeneratedFlight() {
+    _photoLocations.value = [];
+    _flightLine.value = null;
+    _takeoffPath.value = null;
+    _returnPath.value = null;
+    notifyListeners();
+  }
+
   /// Polygon of the area to map
   final _polygon = ValueNotifier<List<LatLng>>([]);
   List<LatLng> get polygon => _polygon.value;
   set polygon(List<LatLng> value) {
-    _polygon.value = value;
+    _polygon.value = List<LatLng>.from(value);
     notifyListeners();
+  }
+
+  void addPolygonPoint(LatLng point) {
+    _polygon.value = [..._polygon.value, point];
+    notifyListeners();
+  }
+
+  void updatePolygonPoint(int index, LatLng point) {
+    if (index < 0 || index >= _polygon.value.length) return;
+    final updatedPolygon = List<LatLng>.from(_polygon.value);
+    updatedPolygon[index] = point;
+    _polygon.value = updatedPolygon;
+    notifyListeners();
+  }
+
+  void removePolygonPoint(LatLng point) {
+    final updatedPolygon = List<LatLng>.from(_polygon.value)..remove(point);
+    _polygon.value = updatedPolygon;
+    notifyListeners();
+  }
+
+  /// Center of the circular orbit.
+  final _circleCenter = ValueNotifier<LatLng?>(null);
+  LatLng? get circleCenter => _circleCenter.value;
+
+  /// Radius of the circular orbit in meters.
+  final _circleRadiusMeters = ValueNotifier<double?>(null);
+  double? get circleRadiusMeters => _circleRadiusMeters.value;
+
+  void setCircleCenter(LatLng? value) {
+    _circleCenter.value = value;
+    if (value == null) {
+      _circleRadiusMeters.value = null;
+    }
+    notifyListeners();
+  }
+
+  void updateCircleCenter(LatLng value) {
+    _circleCenter.value = value;
+    notifyListeners();
+  }
+
+  void setCircleRadius(double? value) {
+    _circleRadiusMeters.value = value != null && value > 0 ? value : null;
+    notifyListeners();
+  }
+
+  void clearCircle() {
+    _circleCenter.value = null;
+    _circleRadiusMeters.value = null;
+    notifyListeners();
+  }
+
+  bool get isCircularOrbit =>
+      isCirclePath && circleCenter != null && circleRadiusMeters != null;
+
+  bool get hasActiveGeometry {
+    if (isCirclePath) return isCircularOrbit;
+    return isPolygonArea && polygon.length > 2;
+  }
+
+  List<LatLng> get activeBoundary {
+    if (isCirclePath) {
+      if (!isCircularOrbit) return const [];
+      return DroneMappingEngine.generateCircleBoundary(
+          circleCenter!, circleRadiusMeters!);
+    }
+    return isPolygonArea ? polygon : const [];
   }
 
   /// User defined home point
@@ -192,6 +307,25 @@ class ValueListenables extends ChangeNotifier {
   Polyline? get returnLine => _returnPath.value;
   set returnLine(Polyline? value) {
     _returnPath.value = value;
+    notifyListeners();
+  }
+
+  int get generatedPointCount {
+    if (isCircularOrbit && _photoLocations.value.length > 1) {
+      return _photoLocations.value.length - 1;
+    }
+    return _photoLocations.value.length;
+  }
+
+  void clearPlanningGeometry() {
+    _polygon.value = [];
+    _circleCenter.value = null;
+    _circleRadiusMeters.value = null;
+    _homePoint.value = null;
+    _photoLocations.value = [];
+    _flightLine.value = null;
+    _takeoffPath.value = null;
+    _returnPath.value = null;
     notifyListeners();
   }
 

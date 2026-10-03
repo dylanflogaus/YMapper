@@ -76,6 +76,13 @@ enum HeadingMode { followWayline, manually, fixed, smoothTransition, towardPOI }
 /// https://developer.dji.com/doc/cloud-api-tutorial/en/api-reference/dji-wpml/common-element.html#wpml-waypointheadingparam-wpml-globalwaypointheadingparam
 enum HeadingPathMode { clockwise, counterClockwise, followBadArc }
 
+/// Direction used by an aircraft `rotateYaw` action.
+///
+/// `clockwise`
+///
+/// `counterClockwise`
+enum AircraftPathMode { clockwise, counterClockwise }
+
 /// coordinateTurn: Coordinated turns, no dips, early turns.
 ///
 /// `toPointAndStopWithDiscontinuityCurvature`: Fly in a straight line and the aircraft stops at the point.
@@ -135,6 +142,8 @@ enum ActionFunction {
   takePhoto,
   startRecord,
   stopRecord,
+  gimbalRotate,
   gimbalEvenlyRotate,
+  rotateYaw,
   hover
 }

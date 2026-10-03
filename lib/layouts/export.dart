@@ -1,4 +1,5 @@
 import 'package:ymapper/core/drone_mapper_format.dart';
+import 'package:ymapper/core/drone_mapping_engine.dart';
 import 'package:ymapper/shared/map_provider.dart';
 import 'package:flutter_map/flutter_map.dart' hide Polygon;
 import 'package:geoxml/geoxml.dart';
@@ -204,23 +205,47 @@ class ExportBarState extends State<ExportBar> {
 
   List<litchi.Waypoint> _generateLitchiWaypoints(ValueListenables listenables) {
     var waypoints = <litchi.Waypoint>[];
+    final center = listenables.circleCenter;
+    final isOrbit = listenables.isCircularOrbit && center != null;
+    final poiAltitude = isOrbit
+        ? DroneMappingEngine.calculateOrbitPoiAltitude(
+            flightAltitude: listenables.altitude.toDouble(),
+            radiusMeters: listenables.circleRadiusMeters!,
+            cameraAngle: listenables.cameraAngle.toDouble(),
+          )
+        : null;
 
-    for (var photoLocation in listenables.photoLocations) {
+    for (var id = 0; id < listenables.photoLocations.length; id++) {
+      final photoLocation = listenables.photoLocations[id];
+      final isClosingPoint =
+          isOrbit && id == listenables.photoLocations.length - 1;
       waypoints.add(litchi.Waypoint(
           latitude: photoLocation.latitude,
           longitude: photoLocation.longitude,
           altitude: listenables.altitude,
           speed: listenables.speed.toInt(),
-          gimbalPitch: listenables.cameraAngle,
-          gimbalMode: litchi.GimbalMode.interpolate,
+          heading: isOrbit
+              ? DroneMappingEngine.bearingTo(photoLocation, center)
+              : null,
+          gimbalPitch: isOrbit ? 0 : listenables.cameraAngle,
+          gimbalMode: isOrbit
+              ? litchi.GimbalMode.focusPoi
+              : litchi.GimbalMode.interpolate,
+          poi: isOrbit
+              ? litchi.Poi(
+                  latitude: center.latitude,
+                  longitude: center.longitude,
+                  altitude: poiAltitude!.round(),
+                )
+              : null,
           actions: [
-            if (listenables.delayAtWaypoint > 0)
+            if (!isClosingPoint && listenables.delayAtWaypoint > 0)
               litchi.Action(
                   actionType: litchi.ActionType.stayFor,
 
                   // Litchi uses milliseconds for delay time
                   actionParam: listenables.delayAtWaypoint.toDouble() * 1000),
-            if (listenables.createCameraPoints)
+            if (!isClosingPoint && listenables.createCameraPoints)
               litchi.Action(actionType: litchi.ActionType.takePhoto)
           ]));
     }
@@ -230,9 +255,81 @@ class ExportBarState extends State<ExportBar> {
 
   List<Placemark> _generateDjiPlacemarks(ValueListenables listenables) {
     var placemarks = <Placemark>[];
+    final center = listenables.circleCenter;
+    final isOrbit = listenables.isCircularOrbit && center != null;
 
-    for (var photoLocation in listenables.photoLocations) {
-      int id = listenables.photoLocations.indexOf(photoLocation);
+    int? previousHeading;
+    final capturePhotos = listenables.createCameraPoints;
+    final continuousOrbit = isOrbit && !capturePhotos;
+    final hoverSeconds = capturePhotos && isOrbit
+        ? (listenables.delayAtWaypoint > 0
+            ? listenables.delayAtWaypoint.toDouble()
+            : DroneMappingEngine.orbitPhotoStabilizationSeconds)
+        : listenables.delayAtWaypoint.toDouble();
+
+    for (var id = 0; id < listenables.photoLocations.length; id++) {
+      final photoLocation = listenables.photoLocations[id];
+      final isClosingPoint =
+          isOrbit && id == listenables.photoLocations.length - 1;
+      final heading = isOrbit
+          ? DroneMappingEngine.normalizeHeading(
+              DroneMappingEngine.bearingTo(photoLocation, center),
+            ).round()
+          : null;
+      final actions = <Action>[];
+      var actionId = id * 4;
+      // The first orbit stop only pitches the camera. Its picture is taken
+      // on the closing visit, after the gimbal has finished moving.
+      final orbitPhotoSetup = isOrbit && capturePhotos && id == 0;
+      final takePhotoHere =
+          capturePhotos && !orbitPhotoSetup && (!isClosingPoint || isOrbit);
+
+      if (heading != null && (takePhotoHere || orbitPhotoSetup)) {
+        actions.add(Action(
+          id: actionId++,
+          actionFunction: ActionFunction.rotateYaw,
+          actionParams: RotateYawParams(
+            heading: heading.toDouble(),
+            pathMode: _shortestYawPath(previousHeading, heading),
+          ),
+        ));
+      }
+
+      if (id == 0) {
+        actions.add(Action(
+          id: actionId++,
+          actionFunction: ActionFunction.gimbalRotate,
+          actionParams: GimbalAbsoluteRotateParams(
+            pitch: listenables.cameraAngle.toDouble(),
+            yaw: 0,
+            rotateYaw: false,
+            rotateDuration: orbitPhotoSetup ? 2 : 0,
+            payloadPosition: 0,
+          ),
+        ));
+      }
+
+      final settleSeconds = orbitPhotoSetup ? 2.0 : hoverSeconds;
+      if (!continuousOrbit &&
+          settleSeconds > 0 &&
+          (!isClosingPoint || takePhotoHere)) {
+        actions.add(Action(
+          id: actionId++,
+          actionFunction: ActionFunction.hover,
+          actionParams: HoverParams(
+            hoverTime: settleSeconds,
+          ),
+        ));
+      }
+
+      if (takePhotoHere) {
+        actions.add(Action(
+          id: actionId,
+          actionFunction: ActionFunction.takePhoto,
+          actionParams: CameraControlParams(payloadPosition: 0),
+        ));
+      }
+
       placemarks.add(Placemark(
           point: WaypointPoint(
               longitude: photoLocation.longitude,
@@ -241,42 +338,48 @@ class ExportBarState extends State<ExportBar> {
           height: listenables.altitude,
           speed: listenables.speed,
           headingParam: HeadingParam(
-              headingMode: HeadingMode.followWayline,
+              headingMode: isOrbit
+                  ? HeadingMode.smoothTransition
+                  : HeadingMode.followWayline,
+              headingAngle: heading,
+              headingAngleEnable: isOrbit,
               headingPathMode: HeadingPathMode.followBadArc),
           turnParam: TurnParam(
-              waypointTurnMode:
-                  WaypointTurnMode.toPointAndStopWithDiscontinuityCurvature,
+              waypointTurnMode: continuousOrbit
+                  ? WaypointTurnMode.toPointAndPassWithContinuityCurvature
+                  : WaypointTurnMode.toPointAndStopWithDiscontinuityCurvature,
               turnDampingDistance: 0),
-          useStraightLine: true,
-          actionGroup: ActionGroup(
-              id: 0,
-              startIndex: id,
-              endIndex: id,
-              actions: [
-                if (id == 0)
-                  Action(
-                      id: id,
-                      actionFunction: ActionFunction.gimbalEvenlyRotate,
-                      actionParams: GimbalRotateParams(
-                          pitch: listenables.cameraAngle.toDouble(),
-                          payloadPosition: 0)),
-                if (listenables.delayAtWaypoint > 0)
-                  Action(
-                      id: id,
-                      actionFunction: ActionFunction.hover,
-                      actionParams:
-                          HoverParams(hoverTime: listenables.delayAtWaypoint)),
-                if (listenables.createCameraPoints)
-                  Action(
-                      id: id,
-                      actionFunction: ActionFunction.takePhoto,
-                      actionParams: CameraControlParams(payloadPosition: 0)),
-              ],
-              mode: ActionMode.sequence,
-              trigger: ActionTriggerType.reachPoint)));
+          useStraightLine: !continuousOrbit,
+          gimbalHeadingParam: isOrbit
+              ? WaypointGimbalHeadingParam(
+                  pitch: listenables.cameraAngle.toDouble(),
+                  yaw: 0.0,
+                )
+              : null,
+          actionGroup: actions.isEmpty
+              ? null
+              : ActionGroup(
+                  id: id,
+                  startIndex: id,
+                  endIndex: id,
+                  actions: actions,
+                  mode: ActionMode.sequence,
+                  trigger: ActionTriggerType.reachPoint)));
+      previousHeading = heading;
     }
 
     return placemarks;
+  }
+
+  AircraftPathMode _shortestYawPath(int? from, int to) {
+    if (from == null) return AircraftPathMode.clockwise;
+
+    var delta = (to - from).toDouble();
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    return delta < 0
+        ? AircraftPathMode.counterClockwise
+        : AircraftPathMode.clockwise;
   }
 
   Future<void> _importFromKml(ValueListenables listenables) async {
@@ -383,8 +486,12 @@ class ExportBarState extends State<ExportBar> {
   Future<void> _loadPolygon(List<LatLng> polygon) async {
     final mapProvider = Provider.of<MapProvider>(context, listen: false);
     final mapController = mapProvider.mapController;
+    final listenables = Provider.of<ValueListenables>(context, listen: false);
 
-    Provider.of<ValueListenables>(context, listen: false).polygon = polygon;
+    listenables.missionType = MissionType.area;
+    listenables.areaShape = AreaShape.polygon;
+    listenables.clearCircle();
+    listenables.polygon = polygon;
 
     if (polygon.isNotEmpty) {
       final bounds = LatLngBounds.fromPoints(polygon);
@@ -406,7 +513,8 @@ class ExportBarState extends State<ExportBar> {
   }
 
   Future<void> _exportAreaToKml(ValueListenables listenables) async {
-    if (listenables.polygon.length < 3) {
+    final boundary = listenables.activeBoundary;
+    if (boundary.length < 3) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text("No polygon to export. Please add waypoints first")));
       return;
@@ -416,7 +524,7 @@ class ExportBarState extends State<ExportBar> {
       Polygon(
         name: "Mapping Area",
         outerBoundaryIs: Rte(
-            rtepts: listenables.polygon
+            rtepts: boundary
                 .map((element) =>
                     Wpt(lat: element.latitude, lon: element.longitude))
                 .toList()),

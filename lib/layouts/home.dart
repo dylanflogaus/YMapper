@@ -18,7 +18,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
 import 'package:flutter_map_dragmarker/flutter_map_dragmarker.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -35,6 +34,9 @@ class HomeLayout extends StatefulWidget {
 }
 
 class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
+  static const LatLng _startupMapCenter = LatLng(39.7833981, -75.6097506);
+  static const double _startupMapZoom = 12;
+
   late final TabController _tabController;
 
   late MapLayer _selectedMapLayer;
@@ -53,7 +55,6 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _getLocationAndMoveMap();
 
     _selectedMapLayer =
         prefs.getInt("mapLayer") == 1 ? MapLayer.satellite : MapLayer.streets;
@@ -180,29 +181,41 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
     });
   }
 
-  void _getLocationAndMoveMap() async {
-    try {
-      if (await Geolocator.isLocationServiceEnabled() == false) return;
-      if (await Geolocator.checkPermission() == LocationPermission.denied) {
-        await Geolocator.requestPermission();
-      }
-      final location = await Geolocator.getCurrentPosition(
-          locationSettings:
-              const LocationSettings(accuracy: LocationAccuracy.low));
-      if (!mounted) return;
-      Provider.of<MapProvider>(context, listen: false)
-          .mapController
-          .move(LatLng(location.latitude, location.longitude), 17);
-    } catch (e) {
-      // Location services not available (e.g., in WSL or without GeoClue2)
-      // Silently ignore - location is an optional feature
-    }
-  }
-
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _handleMapTap(ValueListenables listenables, LatLng point) {
+    if (listenables.isCirclePath) {
+      final center = listenables.circleCenter;
+      if (center == null) {
+        listenables.setCircleCenter(point);
+      } else {
+        final radius = const Distance(roundResult: false).as(
+          LengthUnit.Meter,
+          center,
+          point,
+        );
+        listenables.setCircleRadius(radius);
+      }
+      return;
+    }
+
+    if (listenables.homePoint == null) {
+      listenables.homePoint = point;
+    } else {
+      listenables.addPolygonPoint(point);
+    }
+  }
+
+  LatLng _circleRadiusHandle(ValueListenables listenables) {
+    return const Distance(roundResult: false).offset(
+      listenables.circleCenter!,
+      listenables.circleRadiusMeters!,
+      0,
+    );
   }
 
   void _buildMarkers(ValueListenables listenables) {
@@ -219,17 +232,30 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
       groundOffset: listenables.groundOffset.toDouble(),
     );
 
-    var waypoints = droneMapping.generateWaypoints(
-        listenables.polygon,
-        listenables.createCameraPoints,
-        listenables.fillGrid,
-        listenables.homePoint);
+    List<LatLng> waypoints;
+    if (listenables.isCirclePath) {
+      waypoints = droneMapping.generateCircularWaypoints(
+        listenables.circleCenter!,
+        listenables.circleRadiusMeters!,
+      );
+    } else {
+      waypoints = droneMapping.generateWaypoints(
+          listenables.polygon,
+          listenables.createCameraPoints,
+          listenables.fillGrid,
+          listenables.homePoint);
+    }
+
     listenables.photoLocations = waypoints;
     if (waypoints.isEmpty) return;
 
     _photoMarkers.clear();
 
-    for (int i = 0; i < waypoints.length; i++) {
+    final visibleWaypointCount =
+        listenables.isCircularOrbit && waypoints.length > 1
+            ? waypoints.length - 1
+            : waypoints.length;
+    for (int i = 0; i < visibleWaypointCount; i++) {
       var photoLocation = waypoints[i];
       _photoMarkers.add(Marker(
         point: photoLocation,
@@ -268,11 +294,11 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
     _flightLineArrowMarkers.clear();
     _takeoffLineArrowMarkers.clear();
     _returnLineArrowMarkers.clear();
+    const distance = Distance();
+    const double arrowSpacing = 40.0; // Metres between arrows
 
-    if (waypoints.length > 1 && listenables.homePoint != null) {
-      const double arrowSpacing = 40.0; // Metres between arrows
+    if (waypoints.length > 1) {
       LatLng lastPoint = waypoints[0];
-      const distance = Distance();
       double cumulativeDistance = 0.0;
 
       for (int i = 1; i < waypoints.length; i++) {
@@ -287,7 +313,9 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
             15);
         lastPoint = waypoints[i];
       }
+    }
 
+    if (listenables.homePoint != null) {
       // Add dashed takeoff line from home to first waypoint to designate 'Start'
       final home = listenables.homePoint!;
       final first = waypoints.first;
@@ -317,7 +345,6 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
     } else {
       listenables.takeoffLine = null;
       listenables.returnLine = null;
-      _flightLineArrowMarkers.clear();
       _takeoffLineArrowMarkers.clear();
       _returnLineArrowMarkers.clear();
     }
@@ -375,7 +402,7 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
     return Consumer2<ValueListenables, MapProvider>(
       builder: (context, listenables, mapProvider, _) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (listenables.polygon.length > 2 && listenables.altitude >= 5) {
+          if (listenables.hasActiveGeometry && listenables.altitude >= 5) {
             _buildMarkers(listenables);
           } else {
             listenables.photoLocations.clear();
@@ -395,13 +422,10 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
             child: FlutterMap(
               mapController: mapProvider.mapController,
               options: MapOptions(
-                  onTap: (tapPosition, point) => setState(() {
-                        if (listenables.homePoint == null) {
-                          listenables.homePoint = point;
-                        } else {
-                          listenables.polygon.add(point);
-                        }
-                      }),
+                  initialCenter: _startupMapCenter,
+                  initialZoom: _startupMapZoom,
+                  onTap: (tapPosition, point) =>
+                      _handleMapTap(listenables, point),
                   onSecondaryTap: (tapPosition, point) {
                     setState(() {
                       listenables.homePoint = point;
@@ -423,7 +447,8 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                     subdomains: const ['mt0', 'mt1', 'mt2', 'mt3']),
                 // flight path boundary
                 PolygonLayer(polygons: [
-                  if (listenables.polygon.length > 1)
+                  if (listenables.isPolygonArea &&
+                      listenables.polygon.length > 1)
                     Polygon(
                         points: listenables.polygon,
                         color:
@@ -431,6 +456,20 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                         borderColor: Theme.of(context).colorScheme.primary,
                         borderStrokeWidth: 3),
                 ]),
+                if (listenables.isCircularOrbit)
+                  CircleLayer(
+                    circles: [
+                      CircleMarker(
+                        point: listenables.circleCenter!,
+                        radius: listenables.circleRadiusMeters!,
+                        useRadiusInMeter: true,
+                        color:
+                            Theme.of(context).colorScheme.primary.withAlpha(45),
+                        borderColor: Theme.of(context).colorScheme.primary,
+                        borderStrokeWidth: 3,
+                      ),
+                    ],
+                  ),
                 // flightLine, takeoffLine & returnLine
                 if (listenables.homePoint != null)
                   PolylineLayer(
@@ -449,28 +488,67 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                 MarkerLayer(markers: _returnLineArrowMarkers),
                 // photo markers
                 if (listenables.showPoints) MarkerLayer(markers: _photoMarkers),
-                DragMarkers(markers: [
-                  for (var point in listenables.polygon)
-                    DragMarker(
-                      size: const Size(30, 30),
-                      point: point,
-                      alignment: Alignment.topCenter,
-                      builder: (_, coords, b) => GestureDetector(
-                          onSecondaryTap: () => setState(() {
-                                if (listenables.polygon.contains(point)) {
-                                  listenables.polygon.remove(point);
-                                }
-                              }),
-                          child: const Icon(Icons.place, size: 30)),
-                      onDragUpdate: (details, latLng) => {
-                        if (listenables.polygon.contains(point))
-                          {
-                            listenables.polygon[
-                                listenables.polygon.indexOf(point)] = latLng
-                          }
-                      },
-                    ),
-                ]),
+                if (listenables.isCirclePath &&
+                    listenables.circleCenter != null)
+                  DragMarkers(
+                    markers: [
+                      DragMarker(
+                        point: listenables.circleCenter!,
+                        size: const Size(42, 42),
+                        onDragUpdate: (details, latLng) =>
+                            listenables.updateCircleCenter(latLng),
+                        builder: (context, coords, isDragging) =>
+                            GestureDetector(
+                          onSecondaryTap: listenables.clearCircle,
+                          child: Icon(
+                            Icons.center_focus_strong,
+                            size: 30,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      if (listenables.circleRadiusMeters != null)
+                        DragMarker(
+                          point: _circleRadiusHandle(listenables),
+                          size: const Size(36, 36),
+                          onDragUpdate: (details, latLng) {
+                            final radius =
+                                const Distance(roundResult: false).as(
+                              LengthUnit.Meter,
+                              listenables.circleCenter!,
+                              latLng,
+                            );
+                            listenables.setCircleRadius(radius);
+                          },
+                          builder: (context, coords, isDragging) => Icon(
+                            Icons.radio_button_checked,
+                            size: 24,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                    ],
+                  ),
+                if (listenables.isPolygonArea)
+                  DragMarkers(
+                    markers: [
+                      for (var point in listenables.polygon)
+                        DragMarker(
+                          size: const Size(30, 30),
+                          point: point,
+                          alignment: Alignment.topCenter,
+                          builder: (_, coords, b) => GestureDetector(
+                              onSecondaryTap: () =>
+                                  listenables.removePolygonPoint(point),
+                              child: const Icon(Icons.place, size: 30)),
+                          onDragUpdate: (details, latLng) {
+                            final index = listenables.polygon.indexOf(point);
+                            if (index >= 0) {
+                              listenables.updatePolygonPoint(index, latLng);
+                            }
+                          },
+                        ),
+                    ],
+                  ),
                 // home point icon
                 if (listenables.homePoint != null)
                   DragMarkers(
@@ -486,7 +564,7 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                         builder: (context, coords, isDragging) =>
                             GestureDetector(
                           onSecondaryTap: () {
-                            if (listenables.polygon.isEmpty) {
+                            if (!listenables.hasActiveGeometry) {
                               listenables.homePoint = null;
                             } else {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -515,99 +593,227 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                   alignment: Alignment.topLeft,
                   child: Padding(
                     padding: const EdgeInsets.all(8.0),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 300),
-                      child: Autocomplete<MapSearchLocation>(
-                        optionsBuilder: (textEditingValue) {
-                          return Future.delayed(_debounce, () async {
-                            _onSearchChanged(textEditingValue.text,
-                                (locations) => locations);
-                            return _searchLocations;
-                          });
-                        },
-                        onSelected: (option) =>
-                            mapProvider.mapController.move(option.location, 17),
-                        optionsViewBuilder: (context, onSelected, options) {
-                          return Align(
-                              alignment: Alignment.topLeft,
-                              child: Material(
-                                  elevation: 4.0,
-                                  child: ConstrainedBox(
-                                      constraints: const BoxConstraints(
-                                          maxHeight: 200, maxWidth: 600),
-                                      child: ListView.builder(
-                                        padding: EdgeInsets.zero,
-                                        shrinkWrap: true,
-                                        itemCount: options.length,
-                                        itemBuilder:
-                                            (BuildContext context, int index) {
-                                          final option =
-                                              options.elementAt(index);
-                                          return InkWell(
-                                            onTap: () {
-                                              onSelected(option);
-                                            },
-                                            child: Builder(builder:
-                                                (BuildContext context) {
-                                              final bool highlight =
-                                                  AutocompleteHighlightedOption
-                                                          .of(context) ==
-                                                      index;
-                                              if (highlight) {
-                                                SchedulerBinding.instance
-                                                    .addPostFrameCallback(
-                                                        (Duration timeStamp) {
-                                                  Scrollable.ensureVisible(
-                                                      context,
-                                                      alignment: 0.5);
-                                                });
-                                              }
-                                              return Container(
-                                                color: highlight
-                                                    ? Theme.of(context)
-                                                        .focusColor
-                                                    : null,
-                                                padding:
-                                                    const EdgeInsets.all(16.0),
-                                                child: Column(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      option.name,
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-                                            }),
-                                          );
-                                        },
-                                      ))));
-                        },
-                        displayStringForOption: (option) => option.name,
-                        fieldViewBuilder: (context, textEditingController,
-                                focusNode, onFieldSubmitted) =>
-                            TextFormField(
-                          controller: textEditingController,
-                          focusNode: focusNode,
-                          onFieldSubmitted: (value) async {
-                            await _search(textEditingController.text);
-                            mapProvider.mapController
-                                .move(_searchLocations.first.location, 17);
-                          },
-                          decoration: InputDecoration(
-                              hintText: 'Search location',
-                              border: const OutlineInputBorder(),
-                              filled: true,
-                              suffixIcon: IconButton(
-                                icon: const Icon(Icons.clear),
-                                onPressed: () => textEditingController.clear(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Material(
+                          elevation: 6,
+                          color: Theme.of(context).colorScheme.surface,
+                          borderRadius: BorderRadius.circular(16),
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: SegmentedButtonTheme(
+                              data: SegmentedButtonThemeData(
+                                style: ButtonStyle(
+                                  backgroundColor:
+                                      WidgetStateProperty.resolveWith(
+                                    (states) => states
+                                            .contains(WidgetState.selected)
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHighest,
+                                  ),
+                                  foregroundColor:
+                                      WidgetStateProperty.resolveWith(
+                                    (states) =>
+                                        states.contains(WidgetState.selected)
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .onPrimary
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .onSurface,
+                                  ),
+                                  side: WidgetStatePropertyAll(BorderSide(
+                                    color:
+                                        Theme.of(context).colorScheme.outline,
+                                  )),
+                                ),
                               ),
-                              fillColor: Theme.of(context).colorScheme.surface),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SegmentedButton<MissionType>(
+                                    segments: const [
+                                      ButtonSegment(
+                                        value: MissionType.area,
+                                        label: Text("Area"),
+                                        icon: Icon(Icons.grid_on),
+                                        tooltip:
+                                            "Fill a shape with a coverage pattern",
+                                      ),
+                                      ButtonSegment(
+                                        value: MissionType.path,
+                                        label: Text("Path"),
+                                        icon: Icon(Icons.route),
+                                        tooltip:
+                                            "Fly along a shape and capture from it",
+                                      ),
+                                    ],
+                                    selected: {listenables.missionType},
+                                    onSelectionChanged: (selection) {
+                                      if (selection.isNotEmpty) {
+                                        listenables.missionType =
+                                            selection.first;
+                                      }
+                                    },
+                                  ),
+                                  const SizedBox(height: 6),
+                                  if (listenables.missionType ==
+                                      MissionType.area)
+                                    SegmentedButton<AreaShape>(
+                                      segments: const [
+                                        ButtonSegment(
+                                          value: AreaShape.polygon,
+                                          label: Text("Polygon"),
+                                          icon: Icon(Icons.pentagon_outlined),
+                                        ),
+                                      ],
+                                      selected: {listenables.areaShape},
+                                      onSelectionChanged: (selection) {
+                                        if (selection.isNotEmpty) {
+                                          listenables.areaShape =
+                                              selection.first;
+                                        }
+                                      },
+                                    )
+                                  else
+                                    SegmentedButton<PathShape>(
+                                      segments: const [
+                                        ButtonSegment(
+                                          value: PathShape.circle,
+                                          label: Text("Circle"),
+                                          icon: Icon(Icons.circle_outlined),
+                                        ),
+                                      ],
+                                      selected: {listenables.pathShape},
+                                      onSelectionChanged: (selection) {
+                                        if (selection.isNotEmpty) {
+                                          listenables.pathShape =
+                                              selection.first;
+                                        }
+                                      },
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        if (listenables.isCirclePath)
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Text(
+                                listenables.circleCenter == null
+                                    ? "Tap the map to set the orbit center."
+                                    : listenables.circleRadiusMeters == null
+                                        ? "Tap again to set the orbit radius."
+                                        : "Orbit radius: ${listenables.circleRadiusMeters!.toStringAsFixed(1)} m. Drag the handles to edit. Aircraft heading points toward the center; camera pitch remains the Aircraft setting.",
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 300),
+                          child: Autocomplete<MapSearchLocation>(
+                            optionsBuilder: (textEditingValue) {
+                              return Future.delayed(_debounce, () async {
+                                _onSearchChanged(textEditingValue.text,
+                                    (locations) => locations);
+                                return _searchLocations;
+                              });
+                            },
+                            onSelected: (option) => mapProvider.mapController
+                                .move(option.location, 17),
+                            optionsViewBuilder: (context, onSelected, options) {
+                              return Align(
+                                  alignment: Alignment.topLeft,
+                                  child: Material(
+                                      elevation: 4.0,
+                                      child: ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                              maxHeight: 200, maxWidth: 600),
+                                          child: ListView.builder(
+                                            padding: EdgeInsets.zero,
+                                            shrinkWrap: true,
+                                            itemCount: options.length,
+                                            itemBuilder: (BuildContext context,
+                                                int index) {
+                                              final option =
+                                                  options.elementAt(index);
+                                              return InkWell(
+                                                onTap: () {
+                                                  onSelected(option);
+                                                },
+                                                child: Builder(builder:
+                                                    (BuildContext context) {
+                                                  final bool highlight =
+                                                      AutocompleteHighlightedOption
+                                                              .of(context) ==
+                                                          index;
+                                                  if (highlight) {
+                                                    SchedulerBinding.instance
+                                                        .addPostFrameCallback(
+                                                            (Duration
+                                                                timeStamp) {
+                                                      Scrollable.ensureVisible(
+                                                          context,
+                                                          alignment: 0.5);
+                                                    });
+                                                  }
+                                                  return Container(
+                                                    color: highlight
+                                                        ? Theme.of(context)
+                                                            .focusColor
+                                                        : null,
+                                                    padding:
+                                                        const EdgeInsets.all(
+                                                            16.0),
+                                                    child: Column(
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Text(
+                                                          option.name,
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                }),
+                                              );
+                                            },
+                                          ))));
+                            },
+                            displayStringForOption: (option) => option.name,
+                            fieldViewBuilder: (context, textEditingController,
+                                    focusNode, onFieldSubmitted) =>
+                                TextFormField(
+                              controller: textEditingController,
+                              focusNode: focusNode,
+                              onFieldSubmitted: (value) async {
+                                await _search(textEditingController.text);
+                                mapProvider.mapController
+                                    .move(_searchLocations.first.location, 17);
+                              },
+                              decoration: InputDecoration(
+                                  hintText: 'Search location',
+                                  border: const OutlineInputBorder(),
+                                  filled: true,
+                                  suffixIcon: IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () =>
+                                        textEditingController.clear(),
+                                  ),
+                                  fillColor:
+                                      Theme.of(context).colorScheme.surface),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -652,11 +858,10 @@ class _HomeLayoutState extends State<HomeLayout> with TickerProviderStateMixin {
                           borderRadius: BorderRadius.circular(10),
                           child: InkWell(
                               borderRadius: BorderRadius.circular(10),
-                              onTap: () => setState(() {
-                                    listenables.polygon.clear();
-                                    _photoMarkers.clear();
-                                    listenables.homePoint = null;
-                                  }),
+                              onTap: () {
+                                listenables.clearPlanningGeometry();
+                                _photoMarkers.clear();
+                              },
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
                                 child: Icon(

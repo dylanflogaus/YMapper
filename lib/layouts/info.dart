@@ -20,7 +20,7 @@ class _InfoState extends State<Info> {
       var recommendedShutterSpeed = "0";
       var photoTimeInterval = 0.0;
 
-      if (listenables.polygon.length > 2) {
+      if (listenables.hasActiveGeometry) {
         var mainDistance = DroneMappingEngine.calculateTotalDistance(
             listenables.flightLine?.points ?? []);
         var takeoffDistance = DroneMappingEngine.calculateTotalDistance(
@@ -29,7 +29,11 @@ class _InfoState extends State<Info> {
             listenables.returnLine?.points ?? []);
         totalDistance =
             (mainDistance + takeoffDistance + returnDistance).round();
-        area = DroneMappingEngine.calculateArea(listenables.polygon).round();
+        area = listenables.isCirclePath
+            ? DroneMappingEngine.calculateCircleArea(
+                    listenables.circleRadiusMeters!)
+                .round()
+            : DroneMappingEngine.calculateArea(listenables.polygon).round();
         recommendedShutterSpeed =
             DroneMappingEngine.calculateRecommendedShutterSpeed(
           altitude: listenables.altitude - listenables.groundOffset,
@@ -48,6 +52,12 @@ class _InfoState extends State<Info> {
           groundOffset: listenables.groundOffset,
         );
       }
+
+      final pauseSeconds = listenables.isCircularOrbit &&
+              listenables.createCameraPoints &&
+              listenables.delayAtWaypoint == 0
+          ? DroneMappingEngine.orbitPhotoStabilizationSeconds
+          : listenables.delayAtWaypoint.toDouble();
 
       return Column(
         mainAxisSize: MainAxisSize.min,
@@ -83,11 +93,10 @@ class _InfoState extends State<Info> {
             padding: const EdgeInsets.all(8.0),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               if (listenables.createCameraPoints)
-                Text("Number of photos: ${listenables.photoLocations.length}",
+                Text("Number of photos: ${listenables.generatedPointCount}",
                     style: const TextStyle(fontSize: 16))
               else
-                Text(
-                    "Number of waypoints: ${listenables.photoLocations.length}",
+                Text("Number of waypoints: ${listenables.generatedPointCount}",
                     style: const TextStyle(fontSize: 16)),
               const Divider(),
               Text("Flight distance: $totalDistance m",
@@ -96,7 +105,7 @@ class _InfoState extends State<Info> {
               Text("Area: $area m²", style: const TextStyle(fontSize: 16)),
               const Divider(),
               Text(
-                  "Estimated flight time: ${(((totalDistance / listenables.speed) + (listenables.photoLocations.length * listenables.delayAtWaypoint)) / 60).round()} minutes",
+                  "Estimated flight time: ${(((totalDistance / listenables.speed) + (listenables.generatedPointCount * pauseSeconds)) / 60).round()} minutes",
                   style: const TextStyle(fontSize: 16)),
               const Divider(),
               Text(

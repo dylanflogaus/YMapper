@@ -2,12 +2,12 @@ import 'package:ymapper/main.dart';
 import 'package:flutter/material.dart';
 
 class ThemeManager extends ChangeNotifier {
-  bool _isDark = false;
+  bool _isDark = true;
 
   bool get isDark => _isDark;
 
   ThemeManager() {
-    _isDark = prefs.getBool('isDark') ?? false;
+    _isDark = prefs.getBool('isDark') ?? true;
   }
 
   void toggleTheme() {

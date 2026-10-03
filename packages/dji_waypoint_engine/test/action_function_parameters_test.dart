@@ -30,5 +30,10 @@ void main() {
     test('should throw an assertion error when hoverTime is 0', () {
       expect(() => HoverParams(hoverTime: 0), throwsA(isA<AssertionError>()));
     });
+
+    test('should serialize a one and a half second hover', () {
+      final params = HoverParams(hoverTime: 1.5);
+      expect(params.toXmlString(), contains('<wpml:hoverTime>1.5'));
+    });
   });
 }

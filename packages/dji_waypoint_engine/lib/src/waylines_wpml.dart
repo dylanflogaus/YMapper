@@ -122,6 +122,7 @@ class Placemark extends XmlElement {
   final HeadingParam headingParam;
   final TurnParam turnParam;
   final bool useStraightLine;
+  final WaypointGimbalHeadingParam? gimbalHeadingParam;
   final ActionGroup? actionGroup;
 
   Placemark({
@@ -132,6 +133,7 @@ class Placemark extends XmlElement {
     required this.headingParam,
     required this.turnParam,
     required this.useStraightLine,
+    this.gimbalHeadingParam,
     this.actionGroup,
   }) : super(
           XmlName("Placemark"),
@@ -156,6 +158,7 @@ class Placemark extends XmlElement {
               "wpml:useStraightLine",
               children: [XmlText(useStraightLine ? "1" : "0")],
             ),
+            if (gimbalHeadingParam != null) gimbalHeadingParam,
             if (actionGroup != null) actionGroup,
           ],
         );
@@ -234,9 +237,7 @@ class HeadingParam extends XmlElement {
             ),
             XmlElement.tag(
               "wpml:waypointHeadingAngle",
-              children: [
-                XmlText(headingAngle != null ? headingMode.toString() : "0")
-              ],
+              children: [XmlText(headingAngle?.toString() ?? "0")],
             ),
             poiPoint ??
                 PoiPoint(
@@ -251,6 +252,23 @@ class HeadingParam extends XmlElement {
             ),
           ],
         );
+}
+
+class WaypointGimbalHeadingParam extends XmlElement {
+  final double pitch;
+  final double yaw;
+
+  WaypointGimbalHeadingParam({required this.pitch, required this.yaw})
+      : super(XmlName("wpml:waypointGimbalHeadingParam"), [], [
+          XmlElement.tag(
+            "wpml:waypointGimbalPitchAngle",
+            children: [XmlText(pitch.toString())],
+          ),
+          XmlElement.tag(
+            "wpml:waypointGimbalYawAngle",
+            children: [XmlText(yaw.toString())],
+          ),
+        ]);
 }
 
 class TurnParam extends XmlElement {
